@@ -757,3 +757,26 @@ A partir de la versión 17.05, Docker ha añadido soporte para construcciones mu
 
 Con las construcciones multietapa, se puede aprovechar un único Dockerfile para las imágenes de construcción y despliegue: las imágenes de construcción pueden contener las herramientas de construcción necesarias para generar el binario o el artefacto y, en la segunda etapa, el artefacto se puede copiar en la imagen de tiempo de ejecución, reduciendo así considerablemente el tamaño de la imagen de tiempo de ejecución. Para una construcción típica de varias etapas, una etapa de construcción tiene varias capas: cada capa para instalar las herramientas necesarias para construir la aplicación, generar las dependencias y generar la aplicación. En la capa final, la aplicación construida a partir de las etapas de compilación se copia en la capa final y sólo se tiene en cuenta esa capa para construir la imagen; las capas de compilación se descartan, lo que reduce drásticamente el tamaño de la imagen final.
 
+#### Resumen
+En este capítulo, has aprendido sobre Dockerfiles, el significado del y sobre dockerignore. También has profundizado en algunas instrucciones de Dockerfile comúnmente usadas, un breve vistazo a las y conociste algunas pautas para escribir Dockerfiles.
+Completaste el capítulo con algunos ejercicios sobre la escritura de Dockerfiles, incluyendo cómo escribir Dockerfiles para construcciones multi-etapa. También procediste a Dockerizar el proyecto Newsbot. En el próximo capítulo veremos cómo puedes persistir los datos generados por los contenedores usando Docker Volúmenes.
+
+### Comprender `Docker Volumes`
+
+En los capítulos anteriores, aprendimos sobre Docker y sus terminologías asociadas y profundizamos en cómo podemos construir imágenes Docker usando el Dockerfile.  
+En este capítulo, veremos las estrategias de persistencia de datos para los contenedores Docker y aprenderemos por qué necesitamos estrategias especiales para la persistencia de datos.
+
+#### Persistencia de datos
+
+Tradicionalmente, la mayoría de las soluciones informáticas vienen con formas asociadas para persistir y guardar los datos. En el caso de las máquinas virtuales, se emula un disco virtual y los datos guardados en este disco virtual se guardan como un archivo en el ordenador anfitrión. En el caso de los proveedores de la nube, como Amazon Web Services (AWS), nos proporcionan un volumen raíz para persistir los datos y un almacenamiento en bloque (Elastic Block Store-EBS) para persistir los datos.
+
+Cuando se trata de contenedores, la historia es diferente. Los contenedores fueron pensados y diseñados para cargas de trabajo sin estado y el diseño de las capas de los contenedores lo demuestra. En el capítulo 2, entendimos que una imagen Docker es una plantilla de sólo lectura que consiste en varias capas y cuando la imagen se ejecuta como un contenedor, el contenedor contiene una pequeña capa de sólo escritura de los datos. Esto significa que:
+
+- Los datos están estrechamente ligados al host y dificultan la ejecución de aplicaciones que comparten datos entre varios contenedores y aplicaciones.
+
+- Los datos no persisten cuando el contenedor se cierra y extraer los datos del contenedor es difícil.
+
+- La escritura en la capa de escritura del contenedor requiere un controlador de almacenamiento para gestionar el sistema de archivos. Los controladores de almacenamiento no proporcionan un nivel aceptable de rendimiento en términos de velocidad de lectura/escritura. Grandes cantidades de datos escritos en la capa de escritura del contenedor pueden hacer que el contenedor y el demonio Docker se queden sin memoria.
+
+----
+92 pag
