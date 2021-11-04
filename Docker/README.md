@@ -1152,5 +1152,41 @@ This is a file created from container having kernel 4.9.87-linuxkit-aufs.
 Sin embargo, con los volúmenes, estamos dirigiendo a Docker para que almacene los datos en un archivo de volumen que es gestionado por el propio Docker. Cuando lanzamos un nuevo contenedor, proporcionando el nombre del volumen junto con el comando de ejecución adjunta el volumen al contenedor, haciendo que los datos previamente guardados disponibles para el contenedor recién lanzado.
 
 ##### Instrucción VOLUME en Dockerfile
-pag. 106
----
+
+La instrucción VOLUME marca la ruta mencionada que sigue a la instrucción como un volumen de datos almacenado externamente, gestionado por Docker. La sintaxis de sintaxis es la siguiente:
+```
+VOLUME ["/volumen-de-datos"]
+```
+Las rutas mencionadas después de la instrucción pueden ser un array JSON o un matriz de rutas separadas por espacios.
+
+>**Nota :**   
+> La instrucción VOLUME en un Dockerfile no soporta volúmenes con nombre y, como resultado, cuando el contenedor se ejecuta, el nombre del volumen será un nombre autogenerado.
+
+### Resumen
+
+En este capítulo, has aprendido por qué la persistencia de datos es un problema en contenedores y las diferentes estrategias que ofrece Docker para gestionar la persistencia de datos persistencia de datos en contenedores. También has profundizado en la configuración de volúmenes y en qué se diferencian de los montajes bind. Por último, se realizaron algunos ejercicios prácticos sobre cómo trabajar con montajes bind y volúmenes, y añadiste soporte de volúmenes para el proyecto Newsbot. En el siguiente capítulo, aprenderás más sobre las redes Docker y aprenderás cómo y por qué los contenedores no pueden conectarse entre sí.
+
+## 2. Entendiendo las redes Docker
+
+En los capítulos anteriores, aprendimos sobre Docker y sus terminologías asociadas, profundizamos en cómo podemos construir imágenes Docker usando el Dockerfile, y aprendimos sobre cómo podemos persistir los datos generados por los contenedores.  
+En este capítulo, veremos las redes en Docker y cómo los contenedores pueden hablar entre sí con la ayuda de las características de red de Docker.
+
+### ¿Por qué necesitamos una red de contenedores?
+
+Tradicionalmente, la mayoría de las soluciones informáticas se conciben como soluciones de propósito único. No es frecuente encontrar un único host (o una máquina virtual) que aloje varias cargas de trabajo, especialmente las de producción. Con los contenedores, el escenario cambia. Con los contenedores ligeros y la presencia de plataformas de orquestación avanzadas como Kubernetes o DC/ OS, es muy común tener varios contenedores de diferentes cargas de trabajo que se ejecutan en el mismo host con diferentes instancias de la aplicación distribuidas en varios hosts. En estos casos, la red de contenedores ayuda a permitir (o limitar) la comunicación entre contenedores. Para facilitar Docker, también viene con diferentes modos de redes.
+
+> **Consejo:**  
+> El subsistema de red de Docker se implementa mediante controladores pluggable. Docker viene con cuatro controladores fuera de la caja, con más y más controladores están disponibles en Docker Store. Está disponible en
+https://store.docker.com/search?category=network&q=&type=plugin.
+
+Es importante señalar que todos los modos de red de Docker se consiguen a través de redes definidas por software (SDN). Concretamente, en los sistemas Linux, Docker modifica las reglas de iptables para proporcionar el nivel de acceso/aislamiento necesario.
+
+#### Controladores de red Docker por defecto
+
+Con una instalación estándar de Docker, los siguientes controladores de red están disponibles:
+
+- bridge
+- host
+- overlay
+- macvlan
+- none
