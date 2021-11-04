@@ -778,5 +778,379 @@ Cuando se trata de contenedores, la historia es diferente. Los contenedores fuer
 
 - La escritura en la capa de escritura del contenedor requiere un controlador de almacenamiento para gestionar el sistema de archivos. Los controladores de almacenamiento no proporcionan un nivel aceptable de rendimiento en términos de velocidad de lectura/escritura. Grandes cantidades de datos escritos en la capa de escritura del contenedor pueden hacer que el contenedor y el demonio Docker se queden sin memoria.
 
-----
-92 pag
+#### Ejemplo de pérdida de datos en un contenedor Docker
+
+Para demostrar las características de la capa de escritura, vamos a utilizar un contenedor de una imagen base de Ubuntu. Crearemos un archivo en el contenedor Docker, detendremos el contenedor y observaremos el comportamiento del contenedor
+
+1. Comience por crear un contenedor nginx:
+```
+docker run -d --name nginx-test nginx
+```
+2. Abre un terminal dentro del contenedor:
+```
+docker exec -t nginx-test bash
+```
+3. Crea una copia del default.conf de nginx en un nuevo config:
+```
+cd /etc/nginx/conf.d
+cp default.conf nginx-test.conf
+```
+4. No modificaremos el contenido de nginxtest.conf ya que es irrelevante. Ahora vamos a detener el contenedor. Desde el terminal del host Docker, escribe
+```
+docker stop nginx-test
+```
+5. Inicie el contenedor de nuevo:
+```
+docker start nginx-test
+```
+6. Abre un terminal dentro del contenedor:
+```
+docker exec -it nginx-test bash
+```
+7. Ahora, comprueba si los cambios se mantienen:
+```
+cd /etc/nginx/conf.d
+ls
+default.conf nginx-test.conf
+```
+8. Dado que el contenedor sólo se detuvo, los datos persisten. Vamos a parar, eliminar el contenedor, y luego traer uno nuevo y observar lo que sucede. 
+```
+docker stop nginx-test
+docker rm nginx-test
+```
+9. Inicia un nuevo contenedor:
+```
+docker run -d --name nginx-test nginx
+```
+10. Ahora que un nuevo contenedor está en marcha, vamos a conectarnos a la terminal del contenedor:
+```
+docker exec -it nginx-test bash
+```
+11. Examine el contenido del directorio conf.d de nginx:
+```
+cd /etc/nginx/conf.d
+ls
+default.conf
+```
+
+Como el contenedor fue eliminado, la capa de sólo escritura asociada al contenedor también fue eliminada y los archivos ya no son accesibles. Para una aplicación con estado en contenedor, como una aplicación que requiere una base de datos, los datos del contenedor anterior ya no serán accesibles cuando se elimine un contenedor existente o se añada un nuevo contenedor.  
+Para mitigar este problema, Docker ofrece varias estrategias para persistir los datos.
+- Montajes tmpfs
+- Montajes Bind
+- Volúmenes
+
+##### Montajes `tmpfs`
+
+Como su nombre indica, un tmpfs crea un montaje en tmpfs, que es una instalación de almacenamiento temporal de archivos. Los directorios montados en tmpfs aparecen como un sistema de archivos montado, pero se almacenan en la memoria, no en un almacenamiento persistente como una unidad de disco.  
+Los montajes tmpfs están limitados a los contenedores Docker en Linux. Un montaje en tmpfs es temporal y los datos se almacenan en la memoria de los hosts de Docker. Una vez que el contenedor se detiene, el montaje tmpfs se elimina y los archivos escritos en el montaje tmpfs se pierden.
+
+Para crear un montaje tmpfs, puede utilizar la bandera --mount o --tmpfs cuando se ejecuta un contenedor, como se muestra aquí:
+```
+docker run -it --name tmpfs-test --mount type=tmpfs, target=/
+tmpfs-mount ubuntu bash
+docker run -it --name tmpfs-test --tmpfs /tmpfs-mount ubuntu bash
+docker inspect tmpfs-test | jq .[0].Mounts
+[
+ {
+ "Type": "tmpfs",
+ "Source": "",
+ "Destination": "/tmpfs-mount",
+ "Mode": "",
+ "RW": true,
+ "Propagation": ""
+ }
+]
+```
+
+Esta salida nos dice que el montaje es de tipo tmpfs, y que el destino del montaje es /tmpfs-mount. Dado que el montaje tmpfs no nos permite montar el directorio anfitrión, el origen está vacío.  
+Los montajes tmpfs son mejores para los contenedores que generan datos que no necesitan ser persistidos y no tienen que ser escritos en la capa escribible del contenedor.
+
+##### Montajes `Bind`
+
+En los montajes bind, el archivo/directorio en la máquina anfitriona se monta en el contenedor. Por el contrario, cuando se utiliza un volumen Docker, se crea un nuevo directorio dentro del directorio de almacenamiento de Docker en el host Docker y el contenido del directorio es gestionado por Docker.
+
+> **Consejo:**  
+> Al buscar artículos sobre Docker bind mounts/volume en Internet, lo más probable es que encuentres artículos que hagan referencia al uso de volúmenes con la bandera -v. Con la versión 17.06 de Docker, Docker anima a todos a utilizar la sintaxis --mount. Para facilitarte las cosas, los ejemplos utilizan ambas banderas. También tenga en cuenta que la clave Mounts mientras se emite docker inspect sólo está disponible con la sintaxis --mount.
+
+Vamos a ver cómo podemos utilizar los montajes bind. Intentaremos montar nuestro directorio principal de Docker en un directorio llamado host-home dentro del contenedor.  
+Para ello, escribe el siguiente comando:
+```
+docker run -it --name mount-test --mount type=bind,source="$HOME",
+target=/host-home ubuntu bash
+docker run -it --name mount-test -v $HOME:/host-home ubuntu bash
+```
+
+La inspección del contenedor creado nos indica las diferentes características sobre el montaje.
+```
+docker inspect mount-test | jq .[0].Mounts
+[
+ {
+ "Type": "bind",
+ "Source": "/Users/sathyabhat",
+ "Destination": "/host-home",
+ "Mode": "",
+ "RW": true,
+ "Propagation": "rprivate"
+ }
+]
+```
+Esta salida nos indica que el montaje es de tipo bind, con el origen, es decir, el directorio del host Docker que se está montando, es /Users/sathyabhat (el directorio home), y el destino del montaje es /host-home. La propiedad "Propagación" se refiere a la propagación de bind, una propiedad que indica si los montajes creados para un montaje bind se reflejan o no en las réplicas de ese montaje. La propagación de bind es aplicable sólo a los hosts Linux, porque los montajes bind normalmente no necesitan ser modificados. La bandera RW indica que se puede escribir en el directorio montado. Examinemos el contenido del host-home para ver que los montajes son efectivamente correctos. En la terminal del contenedor, escribe lo siguiente:
+```
+cd /host-home
+ls
+```
+La salida del comando debería ser un listado de nuestro host Docker directorio principal.  
+Intentemos crear un archivo en el directorio host-home. Para ello, escribe el comando siguiente comando:
+```
+cd /host-home
+echo "This is a file created from container having kernel `uname -r`" > host-home-file.txt
+```
+Este comando crea un archivo llamado host-home-file.txt, que contiene el texto. Este es un archivo creado a partir del contenedor que tiene el kernel 4.9.87-linuxkit-aufs (tenga en cuenta que la versión real del kernel puede ser diferente a la que aparece aquí) en el directorio /host-home del del contenedor. Y puesto que se trata de un montaje vinculante del directorio home del Docker, el archivo también debe ser creado en el directorio home del Docker. Veamos si este es el caso. Abre una nueva ventana de terminal en tu host Docker y escribe el siguiente comando:
+```
+cd ~
+ls -lah host-home-file.txt
+```
+Deberíamos ver esta salida, indicando la presencia del archivo:
+```
+-rw-r--r-- 1 sathyabhat sathyabhat 73B Apr 01 11:16 hosthome-file.txt
+```
+Comprobemos el contexto del archivo:
+```
+cat host-home-file.txt
+This is a file created from container having kernel 4.9.87-linuxkit-aufs
+```
+Esto confirma que el archivo creado en el contenedor está efectivamente disponible fuera del contenedor. Dado que nos preocupa la persistencia de los datos después de que el contenedor se detenga, se elimine y se inicie de nuevo, veamos qué sucede.
+
+Detenga el contenedor introduciendo el siguiente comando en el terminal de Docker terminal del host.
+```
+docker stop mount-test
+docker rm mount-test
+```
+Confirma que el archivo en el host Docker sigue presente:
+```
+cat ~/host-home-file.txt
+This is a file created from container having kernel
+4.9.87-linuxkit-aufs
+```
+Los montajes Bind son de inmensa ayuda y se utilizan con mayor frecuencia durante la fase de desarrollo de una aplicación. Al tener montajes bind, podemos preparar la aplicación para la producción utilizando el mismo contenedor de producción mientras se monta el directorio de origen como un montaje bind, lo que permite que los desarrolladores tengan ciclos rápidos de código-test-iterativo sin tener que reconstruir la imagen Docker.
+
+> **Precaución:**  
+> Recuerda que con los montajes bind, el flujo de datos va en ambos en el host Docker y en el contenedor. Cualquier acción destructiva destructiva (como la eliminación de un directorio) tendrá un impacto negativo en el Docker.
+
+Esto es aún más importante si el directorio montado es uno amplio como el directorio principal o incluso el directorio raíz. Un script que se haya vuelto o un rm-rf erróneo puede hacer caer el host Docker por completo. Para mitigar esto, podemos crear un montaje bind con la opción de sólo lectura para que el directorio se monte en modo de sólo lectura. Para ello, podemos proporcionar un parámetro de sólo lectura al comando docker run.  
+Los comandos son los siguientes:
+```
+docker run -it --name mount-test --mount type=bind,source="$HOME",target=/host-home,readonly ubuntu bash
+docker run -it --name mount-test -v $HOME:/host-home:ro ubuntu bash
+```
+Vamos a inspeccionar el contenedor que se ha creado:
+```
+docker inspect mount-test | jq .[0].Mounts
+[
+ {
+ "Type": "bind",
+ "Source": "/Users/sabhat",
+ "Destination": "/host-home",
+ "Mode": "ro",
+ "RW": false,
+ "Propagation": "rprivate"
+ }
+]
+```
+Podemos ver que la bandera "RW" es ahora falsa y el modo se establece como sólo lectura ("read-only"). Intentemos escribir en el archivo como antes:
+
+```
+echo "This is a file created from container having kernel
+`uname -r`" > host-home-file.txt
+bash: host-home-file.txt: Read-only file system
+```
+La escritura falla y bash nos dice que fue porque el sistema de archivos está montado de sólo lectura. Cualquier operación destructiva también se encuentra con el mismo error:
+```
+rm host-home-file.txt
+rm: cannot remove 'host-home-file.txt': Read-only file system
+```
+
+##### Volúmenes
+
+Los volúmenes Docker son el método recomendado actualmente para persistir los datos almacenados en los contenedores. Los volúmenes son completamente gestionados por Docker y tienen muchas ventajas sobre los montajes bind:
+- Los volúmenes son más fáciles de respaldar o transferir que los bind mounts
+- Los volúmenes funcionan tanto en contenedores Linux como Windows
+- Los volúmenes se pueden compartir entre varios contenedores sin problemas
+
+##### Subcomandos de volumen de Docker
+
+Docker expone la API de volúmenes como una serie de subcomandos. Los comandos de comandos son los siguientes:
+- docker volume create
+- docker volume inspect
+- docker volume ls
+- docker volume prune
+- docker volume rm
+
+###### Create Volume
+
+El comando de creación de volumen se utiliza para crear volúmenes con nombre. El caso de uso más común es generar un volumen con nombre. El uso del comando es:
+```
+docker volume create --name=<nombre del volumen> --label=<cualquier metadatos extra>
+```
+
+Ejemplo:
+```
+docker volume create --name=nginx-volume
+```
+Esto crea un volumen con nombre llamado nginx-volume.
+
+###### Inspect
+
+El comando inspect muestra información detallada sobre un volumen. El uso de uso de este comando es:
+```
+docker volume inspect <nombre del volumen>
+```
+Tomando el ejemplo del nombre del volumen nginx, podemos encontrar más detalles escribiendo lo siguiente:
+```
+docker volume inspect nginx-volume
+```
+Esto nos daría un resultado como el que se muestra aquí:
+```
+docker volume inspect nginx-volume
+[
+ {
+ "CreatedAt": "2018-04-17T13:51:02Z",
+ "Driver": "local",
+ "Labels": {},
+ "Mountpoint": "/var/lib/docker/volumes/nginx-volume/_data",
+ "Name": "nginx-volume",
+ "Options": {},
+ "Scope": "local"
+ }
+]
+```
+Este comando es útil si quiere copiar/mover/tomar una copia de seguridad de un volumen. La propiedad `mountpoint` indica la ubicación en el host Docker donde se guarda el archivo que contiene los datos del volumen.
+
+###### List Volumes
+
+El comando list volume muestra todos los volúmenes presentes en el host.  
+El uso se muestra aquí:
+```
+docker volume ls
+```
+
+###### Prune Volumes
+
+El comando prune volume elimina todos los volúmenes locales no utilizados. El uso se muestra aquí:
+```
+docker volume prune <--force>
+```
+Docker considera los volúmenes que no son utilizados por al menos un contenedor como no utilizados. Dado que los volúmenes no utilizados pueden acabar consumiendo una cantidad considerable de espacio en disco, no es mala idea ejecutar el comando prune a intervalos regulares, especialmente en las máquinas de desarrollo locales. Cuando se utiliza la opción --force no pedirá confirmación cuando se ejecute el comando.
+
+###### Remove Volumes
+
+El comando remove volume elimina los volúmenes cuyos nombres se proporcionan como parámetros. El uso se muestra aquí:
+```
+docker volume rm <nombre>
+```
+En el caso del volumen creado aquí, el comando sería
+```
+docker volume rm nginx-volume
+```
+Docker no eliminará un volumen que esté en uso y devolverá un error. Por ejemplo, podríamos intentar eliminar el volumen nginx-volume, que está adjunto al contenedor.
+
+> **Nota:**  
+> Aunque el contenedor se detenga, Docker considerará que el volumen está en uso.
+```
+docker volume rm nginx-volume
+Error response from daemon: unable to remove volume:
+remove nginx-volume: volume is in use -
+[6074757a5afafd74aec6d18a5b4948013639ddfef39507dac5d0850d56edbd82]
+```
+El trozo largo del identificador es el ID del contenedor asociado a el volumen. Si el volumen está asociado a varios contenedores, todos los identificadores de los contenedores aparecerán en la lista. Más detalles sobre el contenedor asociado se pueden encontrar utilizando el comando docker inspect:
+```
+docker inspect 6074757a5afafd74aec6d18a5b4948013639ddfef39507dac5d0850d56edbd82
+```
+
+###### Uso de volúmenes al iniciar un contenedor
+
+La sintaxis para utilizar un volumen al iniciar un contenedor es casi la misma que para usar un host bind. Vamos a ejecutar el siguiente comando:
+```
+docker run -it --name volume-test --mount target=/data-volume ubuntu bash
+docker run -it --name volume-test -v:/data-volume
+```
+Cuando se compara con el comando bind mount, usando la bandera --mount, se omitimos la opción de tipo y fuente. Cuando se utiliza la bandera -v, se omite el directorio host para enlazar (ya que el directorio source/host es mantenido por Docker).  
+Examinemos el contenedor creado:
+```
+docker inspect volume-test | jq .[0].Mounts
+[
+ {
+ "Type": "volume",
+ "Name": "5fe950de3ac2b428873cb0af6281f3fb3817af933fbad32070b1a3101be4927f",
+ "Source": "/var/lib/docker/volumes/5fe950de3ac2b428873cb0af6281f3fb3817af933fbad32070b1a3101be4927f/_data",
+ "Destination": "/data-volume",
+ "Driver": "local",
+ "Mode": "z",
+ "RW": true,
+ "Propagation": ""
+ }
+]
+```
+
+Mirando la sección de montajes, podemos concluir que Docker ha creado un nuevo volumen con un nombre autogenerado de "5fe950de3ac2b428873cb0af6281f3fb3817af933fbad32070b1a3101be4927f" con el archivo de datos para esto guardado en el directorio de datos de Docker, "/var/lib/docker/volumes/5fe950de3ac2b428873cb0af6281f3fb3817af933fbad32070b1a3101be4927f/_data", y montado en el directorio /data-volume del contenedor.  
+Trabajar con nombres de volúmenes autogenerados se vuelve tedioso rápidamente, así que podemos generar un volumen antes de tiempo y proporcionar este nombre a Docker cuando ejecutar un contenedor. Podemos hacer esto usando el comando docker volume para crear el volumen:
+```
+docker volume create volume-test
+```
+También podemos usar docker volume inspect para examinar las propiedades del volumen del volumen:
+```
+docker volume inspect volume-test
+[
+ {
+ "CreatedAt": "2018-04-15T12:58:32Z",
+ "Driver": "local",
+ "Labels": {},
+ "Mountpoint": "/var/lib/docker/volumes/volume-test/_data",
+ "Name": "volume-test",
+ "Options": {},
+ "Scope": "local"
+ }
+]
+ ```
+Ahora podemos referirnos a este volumen al crear/ejecutar un contenedor. Observe la bandera extra source= con la bandera --mount y el parámetro -v. Estos indican el nombre del volumen al que el contenedor tiene que ser contenedor.
+
+```
+docker run -it --name volume-test --mount source=volumetest,target=/data-volume ubuntu bash
+docker run -it --name volume-test -v:volume-test:/data-volume
+```
+
+Intentemos crear el mismo archivo que antes. Desde el terminal dentro del contenedor contenedor, escriba lo siguiente:
+
+```
+echo "This is a file created from container having kernel `uname -r`" > docker_kernel_info.txt
+```
+Nos detendremos y retiraremos el contenedor:
+
+```
+docker stop volume-test
+docker rm volume-test
+```
+
+En ausencia de volúmenes, al eliminar el contenedor, su capa con capacidad de escritura se habría eliminado también. Veamos qué ocurre cuando lanzamos un nuevo contenedor con el volumen adjunto. Recuerda que esto no es un montaje bind, así que no estamos reenviando explícitamente ninguno de los directorios del host Docker.
+
+```
+docker run -it --name volume-test --mount source=volumetest,target=/data-volume ubuntu bash
+docker run -it --name volume-test -v:volume-test:/data-volume
+```
+
+Ahora examinamos el contenido del directorio /volumen de datos del contenedor:
+```
+cd /data-volume/
+ls
+docker-kernel-info.txt
+```
+Ahora examinamos el contenido de docker-kernel-info.txt:
+```
+cat docker_kernel_info.txt
+This is a file created from container having kernel 4.9.87-linuxkit-aufs.
+```
+Sin embargo, con los volúmenes, estamos dirigiendo a Docker para que almacene los datos en un archivo de volumen que es gestionado por el propio Docker. Cuando lanzamos un nuevo contenedor, proporcionando el nombre del volumen junto con el comando de ejecución adjunta el volumen al contenedor, haciendo que los datos previamente guardados disponibles para el contenedor recién lanzado.
+
+##### Instrucción VOLUME en Dockerfile
+pag. 106
+---
